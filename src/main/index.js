@@ -62,13 +62,19 @@ function createWindow() {
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
-// 重启内核：完整停掉再拉起（UI「重启内核」按钮 / 菜单用）
-async function restartKernel() {
-  try {
-    if (kernelProc) { const old = kernelProc; kernelProc = null; await stopProcess(old); }
-    const r = await startKernel();
-    return { ok: true, url: r.url, version: r.version };
-  } catch (err) { return { ok: false, error: err.message }; }
+// 重启内核：完整停掉再拉起（UI「重启内核」按钮 / 菜单用）。同样排队，避免与切换并发
+function restartKernel() {
+  return enqueueKernelOp('restart', async () => {
+    try {
+      if (kernelProc) { const old = kernelProc; kernelProc = null; await stopProcess(old); }
+      const r = await core.startCurrent();
+      await primeAuthCookie(r.url);
+      kernelProc = r.proc;
+      attachSupervisor(r.proc, r.version);
+      send('kernel:status', { state: 'ready', url: r.url, version: r.version });
+      return { ok: true, url: r.url, version: r.version };
+    } catch (err) { return { ok: false, error: err.message }; }
+  });
 }
 
 function buildMenu() {
@@ -110,10 +116,31 @@ function ensureWorkspace() {
   }
 }
 
+// ---------- 内核操作串行化 ----------
+// 所有会动内核进程/指针的操作（start/switch/restart/恢复）必须排队执行：
+// 并发切换会同时拉起多棵内核进程树（每棵几百 MB）并互相残杀，指针来回写。
+// UI 在操作期间收到 kernel:busy，按钮置灰；忙时新请求直接拒绝。
+let kernelOpChain = Promise.resolve();
+let kernelBusyState = false;
+const BUSY = { ok: false, error: '内核操作进行中，请稍候' };
+
+function enqueueKernelOp(label, fn, { force = false } = {}) {
+  if (kernelBusyState && !force) return Promise.resolve({ ...BUSY });
+  kernelBusyState = true;
+  const run = async () => {
+    send('kernel:busy', { busy: true, op: label });
+    try { return await fn(); }
+    finally { kernelBusyState = false; send('kernel:busy', { busy: false, op: label }); }
+  };
+  const next = kernelOpChain.then(run, run);
+  kernelOpChain = next.then(() => {}, () => {});
+  return next;
+}
+
 // 启动即尝试拉起内核；先停掉旧内核进程，防止重连时泄漏（旧内核占着端口/文件）
-async function startKernel() {
+function startKernel() {
   if (kernelStarting) return kernelStarting;
-  kernelStarting = (async () => {
+  kernelStarting = enqueueKernelOp('start', async () => {
     send('kernel:status', { state: 'starting' });
     try {
       if (kernelProc) { const old = kernelProc; kernelProc = null; await stopProcess(old); }
@@ -121,18 +148,15 @@ async function startKernel() {
       await primeAuthCookie(url);
       kernelProc = proc;
       attachSupervisor(proc, version);
-      proc.on('exit', () => { if (kernelProc === proc) { kernelProc = null; } });
       send('kernel:status', { state: 'ready', url, version });
       return { url, version };
     } catch (err) {
-      // 启动失败：交给监督器自动回滚到最近一份可用的其他快照
+      // 启动失败：交给监督器自动回滚到最近一份可用的其他快照（force 排队，等本操作收尾后执行）
       supervisorRecover(err).catch(() => {});
       send('kernel:status', { state: 'error', message: err.message, version: err.version });
       throw err;
-    } finally {
-      kernelStarting = null;
     }
-  })();
+  }).finally(() => { kernelStarting = null; });
   return kernelStarting;
 }
 
@@ -154,45 +178,47 @@ function attachSupervisor(proc, version) {
   });
 }
 
-async function supervisorRecover(failure) {
-  if (supervising || quitting) return;
+// 整个恢复流程作为一个排队能操作（force：恢复必须执行，不被忙碌拒绝，
+// 但仍等当前操作链收尾，避免与进行中的切换互踩）。
+function supervisorRecover(failure) {
+  if (supervising || quitting) return Promise.resolve();
   supervising = true;
-  const failedVersion = failure.version || store.getConfig().kernelVersion;
-  try {
-    // 第一优先：原地重启当前版本（配置/hotfix 类的瞬时崩溃重来一次就好）
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      send('kernel:status', { state: 'recovering', attempt, version: failedVersion });
-      await new Promise((r) => setTimeout(r, 1500 * attempt));
-      try {
-        if (kernelProc) { const old = kernelProc; kernelProc = null; await stopProcess(old); }
-        const { proc, url, version } = await core.startCurrent();
-        await primeAuthCookie(url);
-        kernelProc = proc;
-        attachSupervisor(proc, version);
-        proc.on('exit', () => { if (kernelProc === proc) kernelProc = null; });
-        send('kernel:status', { state: 'ready', url, version, recovered: true });
-        return;
-      } catch { /* 再试 */ }
+  return enqueueKernelOp('recover', async () => {
+    const failedVersion = failure.version || store.getConfig().kernelVersion;
+    try {
+      // 第一优先：原地重启当前版本（配置/hotfix 类的瞬时崩溃重来一次就好）
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        send('kernel:status', { state: 'recovering', attempt, version: failedVersion });
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+        try {
+          if (kernelProc) { const old = kernelProc; kernelProc = null; await stopProcess(old); }
+          const { proc, url, version } = await core.startCurrent();
+          await primeAuthCookie(url);
+          kernelProc = proc;
+          attachSupervisor(proc, version);
+          send('kernel:status', { state: 'ready', url, version, recovered: true });
+          return;
+        } catch { /* 再试 */ }
+      }
+      // 第二优先：回滚到最近一份 ready 的其他快照
+      const candidates = core.rollbackCandidates().filter((v) => v !== failedVersion);
+      for (const v of candidates) {
+        try {
+          send('kernel:status', { state: 'rolling_back', to: v, from: failedVersion });
+          if (kernelProc) { const old = kernelProc; kernelProc = null; await stopProcess(old); }
+          const { proc, url } = await core.switchKernel(v);
+          await primeAuthCookie(url);
+          kernelProc = proc;
+          attachSupervisor(proc, v);
+          send('kernel:status', { state: 'ready', url, version: v, rolledBack: true, from: failedVersion });
+          return;
+        } catch { /* 试下一个候选 */ }
+      }
+      send('kernel:status', { state: 'down', message: '自动恢复失败：没有可用的快照，请在内核管理里安装', version: failedVersion });
+    } finally {
+      supervising = false;
     }
-    // 第二优先：回滚到最近一份 ready 的其他快照
-    const candidates = core.rollbackCandidates().filter((v) => v !== failedVersion);
-    for (const v of candidates) {
-      try {
-        send('kernel:status', { state: 'rolling_back', to: v, from: failedVersion });
-        if (kernelProc) { const old = kernelProc; kernelProc = null; await stopProcess(old); }
-        const { proc, url } = await core.switchKernel(v);
-        await primeAuthCookie(url);
-        kernelProc = proc;
-        attachSupervisor(proc, v);
-        proc.on('exit', () => { if (kernelProc === proc) kernelProc = null; });
-        send('kernel:status', { state: 'ready', url, version: v, rolledBack: true, from: failedVersion });
-        return;
-      } catch { /* 试下一个候选 */ }
-    }
-    send('kernel:status', { state: 'down', message: '自动恢复失败：没有可用的快照，请在内核管理里安装', version: failedVersion });
-  } finally {
-    supervising = false;
-  }
+  }, { force: true });
 }
 
 // dsh 的鉴权 cookie 是 SameSite=Strict，而宿主页(file://)与 iframe(http://127.0.0.1) 跨站，
@@ -231,24 +257,27 @@ function registerIpc() {
       return { ok: true, snapshot: s };
     } catch (err) { return { ok: false, error: err.message }; }
   });
-  ipcMain.handle('kernel:switch', async (_e, version) => {
+  ipcMain.handle('kernel:switch', (_e, version) => enqueueKernelOp('switch', async () => {
     try {
+      send('kernel:status', { state: 'starting', switching: true, version });
       if (kernelProc) { const old = kernelProc; kernelProc = null; await stopProcess(old); }
       const { proc, url } = await core.switchKernel(version, { onEvent: (m) => send('kernel:progress', m) });
       await primeAuthCookie(url);
       kernelProc = proc;
       attachSupervisor(proc, version);
-      proc.on('exit', () => { if (kernelProc === proc) kernelProc = null; });
       terminal.writeShims();
+      // 切换即已启动，直接广播 ready；前端不要再调 start()（否则会把新内核杀掉重起）
+      send('kernel:status', { state: 'ready', url, version });
       return { ok: true, url, version };
     } catch (err) { return { ok: false, error: err.message }; }
-  });
+  }));
   ipcMain.handle('kernel:rollbackCandidates', () => core.rollbackCandidates());
   ipcMain.handle('kernel:delete', (_e, version) => {
+    if (kernelBusyState) return { ...BUSY };
     try { return core.deleteSnapshot(version); }
     catch (err) { return { ok: false, error: err.message }; }
   });
-  ipcMain.handle('kernel:start', () => startKernel().then(r => ({ ok: true, ...r })).catch(e => ({ ok: false, error: e.message })));
+  ipcMain.handle('kernel:start', () => startKernel().then(r => (r && r.ok === false ? r : { ok: true, ...r })).catch(e => ({ ok: false, error: e.message })));
   ipcMain.handle('kernel:restart', () => restartKernel());
   ipcMain.handle('kernel:webUrl', async () => {
     try { const r = await startKernel(); return { ok: true, url: r.url, version: r.version }; }

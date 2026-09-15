@@ -182,18 +182,27 @@ async function refreshKernel() {
     tb.appendChild(tr);
   }
   tb.querySelectorAll('[data-switch]').forEach((b) => b.addEventListener('click', async () => {
+    b.disabled = true;
     const sw = await window.dsh.kernel.switchTo(b.dataset.switch);
-    if (!sw.ok) alert('切换失败：' + sw.error);
-    else { await window.dsh.kernel.start(); showView('web'); }
+    // 切换成功时主进程已把新内核拉起并广播 ready，这里无需再 start（否则杀掉重起白等 10 秒）
+    if (!sw.ok && sw.error !== '内核操作进行中，请稍候') alert('切换失败：' + sw.error);
+    refreshKernel();
   }));
   tb.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
     const v = b.dataset.del;
     if (!confirm(`删除快照 ${v}？（约 300–400 MB，删除后需重新下载才能再用）`)) return;
     const r = await window.dsh.kernel.delete(v);
-    if (!r.ok) alert('删除失败：' + r.error);
+    if (!r.ok && r.error !== '内核操作进行中，请稍候') alert('删除失败：' + r.error);
     refreshKernel();
   }));
 }
+
+// 内核操作互斥：忙碌期间禁用所有会动内核的按钮，防止连点并发拉起多棵进程树
+window.dsh.on('kernel:busy', ({ busy }) => {
+  document.querySelectorAll('#snap-table button, #btn-install, #btn-restart-kernel, #btn-plugin-add')
+    .forEach((b) => { b.disabled = busy; });
+  document.body.style.cursor = busy ? 'progress' : '';
+});
 
 // 目录迁移：选目录 → 确认 → 停内核搬迁 → 重启
 async function bindRelocate(btnId, kind, label) {
