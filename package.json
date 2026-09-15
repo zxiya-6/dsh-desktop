@@ -61,10 +61,10 @@
       "perMachine": true,
       "allowToChangeInstallationDirectory": true,
       "include": "build/installer.nsh",
-      "artifactName": "DSH-Desktop-${version}-${ext===\"exe\"?(target===\"portable\"?\"portable\":\"Setup\"):ext}.${ext}"
+      "artifactName": "DSH-Desktop-${version}-Setup.${ext}"
     },
     "portable": {
-      "artifactName": "DSH-Desktop-${version}-portable.exe"
+      "artifactName": "DSH-Desktop-${version}-portable.${ext}"
     }
   }
 }
