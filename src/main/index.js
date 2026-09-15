@@ -9,7 +9,9 @@ const { stopProcess } = require('./dsh-launcher');
 const terminal = require('./terminal');
 const pluginStore = require('./plugin-store');
 
-// 单实例锁：避免两个实例同时写同一套 profile
+// 单实例锁：避免两个实例同时写同一套 profile。
+// 锁的作用域跟随 userData——先把它指到隔离后的数据根，多份安装才互不干扰。
+app.setPath('userData', store.paths.root());
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 }

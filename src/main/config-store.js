@@ -23,13 +23,34 @@ function appDataDir() {
 
 function initRoot() {
   if (root) return root;
-  // 绿色版（portable target）：数据写 exe 同级 dsh-desktop-data\
-  const exe = process.execPath;
-  const isPortable = path.basename(path.dirname(exe)).toLowerCase().startsWith('portable') ||
-    (process.env.DSH_DESKTOP_PORTABLE === '1');
-  root = isPortable
-    ? path.join(path.dirname(exe), 'dsh-desktop-data')
-    : path.join(appDataDir(), 'dsh-desktop');
+  const exeDir = path.dirname(process.execPath);
+  // 数据目录优先级：环境变量 > 安装目录 data-dir 标记文件 > 绿色版同级 > 默认 %APPDATA%。
+  // data-dir 标记实现按安装隔离：文件内容为一行（绝对路径，或相对安装目录的子目录名），
+  // 多份 dsh-desktop 安装各写各的，即互不共享内核/插件/凭据。
+  let overridden = null;
+  if (process.env.DSH_DESKTOP_DATA_DIR) {
+    overridden = path.resolve(process.env.DSH_DESKTOP_DATA_DIR);
+  } else {
+    try {
+      const marker = path.join(exeDir, 'data-dir');
+      if (fs.existsSync(marker)) {
+        const line = fs.readFileSync(marker, 'utf8').trim().split(/\r?\n/)[0];
+        if (line) {
+          overridden = path.isAbsolute(line) ? path.resolve(line) : path.resolve(exeDir, line);
+        }
+      }
+    } catch { /* 标记读取失败按默认走 */ }
+  }
+  if (overridden) {
+    root = overridden;
+  } else {
+    // 绿色版（portable target）：数据写 exe 同级 dsh-desktop-data\
+    const isPortable = exeDir.toLowerCase().includes('portable') ||
+      (process.env.DSH_DESKTOP_PORTABLE === '1');
+    root = isPortable
+      ? path.join(exeDir, 'dsh-desktop-data')
+      : path.join(appDataDir(), 'dsh-desktop');
+  }
   fs.mkdirSync(root, { recursive: true });
   return root;
 }

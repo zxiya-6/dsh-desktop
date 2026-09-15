@@ -101,3 +101,7 @@ License: MIT
 - **快照保留下限 2**：keepSnapshots 在 config/IPC/UI 三处钳制为 ≥ 2（`MIN_KEEP_SNAPSHOTS`），当前内核之外永远有一份可回滚。删除快照时同样校验：删完不足两份 ready 直接拒绝。
 - **内核监督器**（index.js `attachSupervisor`/`supervisorRecover`）：内核意外退出（非 0 退出码）→ 原地自动重启最多 2 次（指数退避）；仍起不来 → 自动回滚到最近一份 ready 的其他快照并写回指针（记入回滚历史）；全部失败才报 `down` 交给用户处理。正常退出（code=0）与主动切换/重连不会误触发。
 - 实弹验证：`taskkill /F` 内核 → 1.5s 内原地恢复；破坏 rc.1 入口文件后强杀 → 4s 内自动回滚到 0.1.6-alpha.1，指针与回滚历史正确落盘。
+
+### 多份安装的数据隔离（v0.1.1）
+
+同一台机器装多份 dsh-desktop（比如不同目录各一份）时，默认会共享 `%APPDATA%\dsh-desktop`。要隔离，在**安装目录**放一个名为 `data-dir` 的文本文件（UTF-8，一行）：内容为绝对路径（如 `C:\dsh-data-a`）或相对安装目录的子目录名（如 `data-a`）。该份安装的内核快照、插件、凭据、单实例锁就全部走自己的目录。环境变量 `DSH_DESKTOP_DATA_DIR` 优先级更高。v0.1.1 起安装标识（appId）独立，卸载注册表项也不与其他份冲突。
