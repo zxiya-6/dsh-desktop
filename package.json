@@ -1,0 +1,70 @@
+{
+  "name": "dsh-desktop",
+  "productName": "DSH Desktop",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness (DSH) 的 Windows 桌面封装：依赖内置、与系统隔离、内核可更新可回滚",
+  "main": "src/main/index.js",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "dist:win": "electron-builder --win --x64",
+    "smoke:terminal": "node scripts/smoke-terminal.js",
+    "smoke:kernel": "node scripts/smoke-kernel.js",
+    "smoke:switch": "node scripts/smoke-switch.js",
+    "smoke:phase2": "node scripts/smoke-phase2.js",
+    "seed:core": "node scripts/seed-core.js",
+    "smoke:plugins": "node scripts/smoke-plugins.js"
+  },
+  "devDependencies": {
+    "electron": "^44.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "node-pty": "^1.0.0",
+    "pnpm": "^10.0.0"
+  },
+  "build": {
+    "appId": "ai.deepseek.dshdesktop",
+    "productName": "DSH Desktop",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**",
+      "node_modules/**",
+      "!node_modules/.cache/**"
+    ],
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "include": "build/installer.nsh",
+      "artifactName": "DSH-Desktop-${version}-${ext===\"exe\"?(target===\"portable\"?\"portable\":\"Setup\"):ext}.${ext}"
+    },
+    "portable": {
+      "artifactName": "DSH-Desktop-${version}-portable.exe"
+    }
+  }
+}

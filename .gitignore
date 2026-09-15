@@ -1,0 +1,12 @@
+# 依赖与产物
+node_modules/
+dist/
+*.exe
+*.blockmap
+
+# 运行时生成
+*.log
+
+# 系统噪音
+Thumbs.db
+.DS_Store

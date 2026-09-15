@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; frame-src http://127.0.0.1:*; script-src 'self'">
+  <title>DSH Desktop</title>
+  <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css">
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: #111318; color: #dde1e8; }
+    #nav { display: flex; gap: 4px; padding: 6px 10px; background: #181b22; border-bottom: 1px solid #242832; }
+    #nav button { background: transparent; color: #aab2c0; border: 1px solid transparent; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    #nav button.active { color: #fff; background: #242a36; border-color: #333c4d; }
+    main { height: calc(100vh - 42px); }
+    section.view { display: none; height: 100%; }
+    section.view.active { display: block; }
+    #web-frame { width: 100%; height: 100%; border: 0; background: #fff; }
+    .pane { padding: 24px; max-width: 860px; margin: 0 auto; }
+    .card { background: #181b22; border: 1px solid #242832; border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; }
+    h2 { font-size: 16px; margin: 0 0 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #242832; }
+    button.act { background: #2f6fed; color: #fff; border: 0; border-radius: 6px; padding: 7px 16px; cursor: pointer; font-size: 13px; }
+    button.act:disabled { opacity: .5; cursor: default; }
+    button.ghost { background: transparent; color: #aab2c0; border: 1px solid #333c4d; }
+    .muted { color: #7d8797; font-size: 12px; }
+    .log { font-family: Consolas, monospace; font-size: 12px; color: #9fd49f; white-space: pre-wrap; max-height: 140px; overflow: auto; }
+    #terminal-host { padding: 8px; height: 100%; }
+    .err { color: #ff8f8f; }
+    select, input { background: #10131a; color: #dde1e8; border: 1px solid #333c4d; border-radius: 6px; padding: 6px 10px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <nav id="nav">
+    <button data-view="web" class="active">Web UI</button>
+    <button data-view="terminal">终端 (Ctrl+`)</button>
+    <button data-view="kernel">内核管理 (Ctrl+K)</button>
+    <button data-view="plugins">插件商店</button>
+  </nav>
+  <main>
+    <section class="view active" id="view-web">
+      <div id="web-status" class="pane card" style="display:none">
+        <h2>内核未运行</h2>
+        <p class="muted" id="web-status-msg">正在启动内核…</p>
+        <button class="act" id="btn-install-first" style="display:none">安装内核</button>
+        <button class="act ghost" id="btn-restart-kernel">重启内核</button>
+      </div>
+      <iframe id="web-frame" style="display:none"></iframe>
+    </section>
+    <section class="view" id="view-terminal">
+      <div id="terminal-host"></div>
+    </section>
+    <section class="view" id="view-kernel">
+      <div class="pane">
+        <div class="card">
+          <h2>远端版本</h2>
+          <div style="display:flex; gap:10px; align-items:center">
+            <select id="remote-versions"></select>
+            <button class="act" id="btn-install">安装选中版本</button>
+            <label class="muted">限速 KB/s <input id="rate" type="number" value="0" min="0" style="width:80px"></label>
+          </div>
+          <div class="log" id="install-log"></div>
+        </div>
+        <div class="card">
+          <h2>已安装快照</h2>
+          <table id="snap-table"><thead><tr><th>版本</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table>
+          <p class="muted">切换顺序：stop → 启动新快照 → 通过就绪探测 → 才写配置。失败自动回滚。当前内核不可删除，需先切换。</p>
+        </div>
+        <div class="card">
+          <h2>安装位置</h2>
+          <table style="width:100%">
+            <tr><td style="width:110px">内核目录</td><td><span class="muted" id="kernel-dir"></span></td>
+              <td style="width:160px"><button class="act ghost" id="btn-move-kernel">更换并迁移…</button></td></tr>
+            <tr><td>插件主目录</td><td><span class="muted" id="plugin-dir"></span></td>
+              <td><button class="act ghost" id="btn-move-plugins">更换并迁移…</button></td></tr>
+          </table>
+          <p class="muted">迁移会先停止内核，把整目录搬到新的空目录（支持跨盘），再原样重启；profile、插件、会话不丢。</p>
+          <h2 style="margin-top:14px">运行环境（内置，与系统隔离）</h2>
+          <p class="muted" id="runtime-info"></p>
+        </div>
+        <div class="card">
+          <h2>设置</h2>
+          <label>快照保留数 <input id="keep" type="number" min="2" max="10" style="width:60px"></label>
+          <span class="muted">（至少 2 份：当前内核 + 一份可回滚；超出会在安装新版本后清理）</span>
+        </div>
+      </div>
+    </section>
+    <section class="view" id="view-plugins">
+      <div class="pane">
+        <div class="card">
+          <h2>商店目录</h2>
+          <div style="display:flex; gap:10px; align-items:center; margin-bottom:10px">
+            <label>profile <select id="plugin-profile"><option value="web">web</option><option value="tui">tui</option><option value="rescue">rescue</option></select></label>
+            <input id="plugin-spec" placeholder="包名或 包名@版本，如 @scope/plugin@1.0.0" style="flex:1">
+            <button class="act" id="btn-plugin-add">安装</button>
+            <button class="act ghost" id="btn-plugin-save">存入商店</button>
+          </div>
+          <table id="catalog-table"><thead><tr><th>插件</th><th>说明</th><th>操作</th></tr></thead><tbody></tbody></table>
+          <div class="log" id="plugin-log"></div>
+          <p class="muted">插件安装到 %APPDATA%\dsh-desktop\dsh-home\profiles\&lt;profile&gt;\node_modules，与系统 npm 隔离；重装应用或切换内核都不会丢失。</p>
+        </div>
+        <div class="card">
+          <h2>已安装（当前 profile）</h2>
+          <table id="installed-table"><thead><tr><th>插件</th><th>版本</th><th>操作</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
