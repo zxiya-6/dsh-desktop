@@ -78,13 +78,15 @@ const paths = {
 function relocate(kind, newPath) {
   const key = kind === 'core' ? 'kernelRoot' : 'dshHomeRoot';
   newPath = path.resolve(String(newPath));
-  if (!/^[A-Za-z]:\\/.test(newPath) && !newPath.startsWith('\\\\')) throw new Error('需要一个本地绝对路径');
+  if (!path.isAbsolute(newPath)) throw new Error('需要一个本地绝对路径');
   const cur = kind === 'core' ? paths.coreDir() : paths.dshHome();
-  if (path.resolve(cur).toLowerCase() === newPath.toLowerCase()) {
+  // Windows 路径大小写不敏感；Linux/macOS 敏感
+  const norm = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
+  if (path.resolve(norm(cur)) === norm(newPath)) {
     return { ok: true, moved: false, path: cur };
   }
   // 不允许把目录搬进自己里面
-  if (newPath.toLowerCase().startsWith(path.resolve(cur).toLowerCase() + path.sep)) {
+  if (norm(newPath).startsWith(norm(path.resolve(cur)) + path.sep)) {
     throw new Error('新位置不能在当前目录内部');
   }
   fs.mkdirSync(newPath, { recursive: true });

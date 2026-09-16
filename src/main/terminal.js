@@ -1,10 +1,12 @@
 'use strict';
-// 内置终端：node-pty + shell 检测。node-pty 带 N-API 预编译，加载失败时降级（返回明确错误，其余功能不受影响）。
+// 内置终端：node-pty + shell 检测。node-pty 带 N-API 预编译（win/linux），加载失败时降级（返回明确错误，其余功能不受影响）。
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const store = require('./config-store');
 const { buildChildEnv } = require('./dsh-launcher');
+
+const IS_WIN = process.platform === 'win32';
 
 let pty = null;
 function getPty() {
@@ -17,12 +19,17 @@ function getPty() {
 
 function nodeMajor() { return Number(process.versions.node.split('.')[0]); }
 
-// shell 检测：Windows 上三者行为差异足以导致乱码和命令失败，必须显式检测并展示
+// shell 检测：平台各按优先级探测。Windows 上 pwsh/PS/cmd 行为差异大必须显式检测；
+// Linux/macOS 用 login shell 顺序 bash → zsh → sh。
 async function detectShell() {
-  const candidates = [
+  const candidates = IS_WIN ? [
     { id: 'pwsh7', label: 'PowerShell 7+ (pwsh7)', exe: 'pwsh.exe', args: ['-NoLogo'] },
     { id: 'powershell', label: 'Windows PowerShell (5.1)', exe: 'powershell.exe', args: ['-NoLogo'] },
     { id: 'cmd', label: 'cmd.exe', exe: 'cmd.exe', args: [] },
+  ] : [
+    { id: 'bash', label: 'bash', exe: 'bash', args: [] },
+    { id: 'zsh', label: 'zsh', exe: 'zsh', args: [] },
+    { id: 'sh', label: 'sh', exe: 'sh', args: [] },
   ];
   for (const c of candidates) {
     const version = await tryVersion(c);
@@ -33,13 +40,20 @@ async function detectShell() {
 
 function tryVersion(c) {
   return new Promise((resolve) => {
-    const verCmd = c.id === 'cmd' ? 'ver' : '$PSVersionTable.PSVersion.ToString()';
-    const child = spawn(c.exe, c.id === 'cmd' ? ['/d', '/c', verCmd] : ['-NoProfile', '-NoLogo', '-Command', verCmd], {
-      windowsHide: true, timeout: 5000,
+    let args;
+    if (c.id === 'cmd') args = ['/d', '/c', 'ver'];
+    else if (c.id === 'pwsh7' || c.id === 'powershell') args = ['-NoProfile', '-NoLogo', '-Command', '$PSVersionTable.PSVersion.ToString()'];
+    // bash/zsh/sh：--version 是纯参数打印，不进交互循环，绝对安全
+    else args = ['--version'];
+    const child = spawn(c.exe, args, {
+      windowsHide: true,
+      timeout: 5000,
+      env: { ...process.env }, // 显式继承完整 PATH，防 pty 子环境缺路径
     });
     let out = '';
     child.stdout.on('data', (d) => { out += d.toString(); });
-    child.on('error', () => resolve(null));
+    child.stderr.on('data', () => {});
+    child.on('error', (e) => { console.error(`[shell-detect] ${c.exe}: ${e.message}`); resolve(null); });
     child.on('close', (code) => {
       if (code !== 0) return resolve(null);
       const v = out.trim().split(/\r?\n/).filter(Boolean).pop() || null;
@@ -57,7 +71,7 @@ function createSession(cols, rows) {
     throw err;
   }
   const shell = store.getConfig().shell || null;
-  const exe = shell || (process.env.ComSpec || 'cmd.exe');
+  const exe = shell || (IS_WIN ? (process.env.ComSpec || 'cmd.exe') : (process.env.SHELL || 'bash'));
   const isPs = /pwsh|powershell/i.test(exe);
   const args = isPs ? ['-NoLogo'] : [];
   const term = p.spawn(exe, args, {
@@ -66,14 +80,15 @@ function createSession(cols, rows) {
     cwd: store.paths.workspace(),
     env: {
       ...buildChildEnv({ dshHome: store.paths.dshHome() }),
-      // cmd 下强制 UTF-8；PS 由 profile 输出编码控制
-      ...( /cmd\.exe$/i.test(exe) ? {} : {}),
+      // Linux 下保证 UTF-8 locale，防乱码
+      ...(IS_WIN ? {} : { LANG: process.env.LANG || 'C.UTF-8' }),
     },
   });
   return term;
 }
 
-// 生成 bin shim：dsh.cmd / pnpm.cmd，指向当前内核快照与内置 pnpm
+// 生成 bin shim，指向当前内核快照与内置 pnpm
+// Windows: dsh.cmd/pnpm.cmd；Linux/macOS: dsh/pnpm 可执行脚本
 function writeShims() {
   const binDir = store.paths.bin();
   fs.mkdirSync(binDir, { recursive: true });
@@ -81,11 +96,20 @@ function writeShims() {
   const dshEntry = version
     ? path.join(store.paths.snapshotsDir(), version, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
     : null;
-  fs.writeFileSync(path.join(binDir, 'dsh.cmd'),
-    `@echo off\r\nrem DSH Desktop 内置 shim\r\n"${process.execPath}" --expose-internals "${dshEntry || 'KERNEL_NOT_INSTALLED'}" %*\r\n`);
   const pnpmCjs = path.join(path.dirname(__dirname), '..', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs');
-  fs.writeFileSync(path.join(binDir, 'pnpm.cmd'),
-    `@echo off\r\nrem DSH Desktop 内置 shim\r\n"${process.execPath}" "${pnpmCjs}" %*\r\n`);
+  if (IS_WIN) {
+    fs.writeFileSync(path.join(binDir, 'dsh.cmd'),
+      `@echo off\r\nrem DSH Desktop 内置 shim\r\n"${process.execPath}" --expose-internals "${dshEntry || 'KERNEL_NOT_INSTALLED'}" %*\r\n`);
+    fs.writeFileSync(path.join(binDir, 'pnpm.cmd'),
+      `@echo off\r\nrem DSH Desktop 内置 shim\r\n"${process.execPath}" "${pnpmCjs}" %*\r\n`);
+  } else {
+    for (const [name, target] of [['dsh', dshEntry], ['pnpm', pnpmCjs]]) {
+      const f = path.join(binDir, name);
+      fs.writeFileSync(f,
+        `#!/bin/sh\n# DSH Desktop 内置 shim\nexec "${process.execPath}" --expose-internals "${target || 'KERNEL_NOT_INSTALLED'}" "$@"\n`);
+      fs.chmodSync(f, 0o755);
+    }
+  }
 }
 
 module.exports = { detectShell, createSession, writeShims, getPty, nodeMajor };

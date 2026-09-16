@@ -46,6 +46,8 @@ function launchKernel({ entry, dshHome, cwd, env = {}, onStdout, onStderr, onExi
     cwd,
     env: { ...buildChildEnv({ dshHome }), ...env },
     windowsHide: true,
+    // posix 下 detached 让内核自成进程组：停进程时 kill(-pid) 连子进程树一起终结
+    detached: process.platform !== 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -119,7 +121,9 @@ function stopProcess(proc) {
         spawn('taskkill', ['/PID', String(proc.pid), '/T', '/F'], { windowsHide: true });
       } catch { try { proc.kill(); } catch {} }
     } else {
-      try { proc.kill(); } catch {}
+      // 内核以 detached 启动自成进程组：kill(-pid) 连 worker/子进程整组终结
+      try { process.kill(-proc.pid, 'SIGTERM'); }
+      catch { try { proc.kill('SIGTERM'); } catch {} }
     }
   });
 }
