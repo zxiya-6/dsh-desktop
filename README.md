@@ -106,3 +106,12 @@ License: MIT
 
 同一台机器装多份 dsh-desktop（比如不同目录各一份）时，默认会共享 `%APPDATA%\dsh-desktop`。要隔离，在**安装目录**放一个名为 `data-dir` 的文本文件（UTF-8，一行）：内容为绝对路径（如 `C:\dsh-data-a`）或相对安装目录的子目录名（如 `data-a`）。该份安装的内核快照、插件、凭据、单实例锁就全部走自己的目录。环境变量 `DSH_DESKTOP_DATA_DIR` 优先级更高。v0.1.1 起安装标识（appId）独立，卸载注册表项也不与其他份冲突。
 13. **`dsh.profile.bundles` 名单的硬校验**：写进 profile bundles 的每个包，其 package.json 必须声明 `dsh.bundle` 元数据，否则内核启动即抛 `declares no dsh.bundle`、无限崩溃。`@deepseek-ai/cordis-plugin-group` 这类无元数据的包不能进 bundles（实测踩坑：加进去 → 内核起不来，连切换回滚都失败，因为 profile 是跨内核版本共享的）。判断标准：包声明了 `dsh.bundle` → 可加 bundles 激活；没有 → 永远是普通依赖，当库用，别挂载。另：内核日志用 append 流写入，强杀进程会丢缓冲区里的最后几行，排查启动问题时别被"没有 launch 记录"迷惑。
+
+## Linux 版（v0.2.0 起）
+
+- **目标格式**：AppImage（通用，双击即跑）与 deb（Debian/Ubuntu 系）。x64。
+- **构建**：必须在本机 Linux 上构建（node-pty 原生模块不能交叉编译），或用仓库自带的 GitHub Actions（推 tag 自动双平台构建并发布 Release）。本机构建：`npm install && npm run dist:linux`。
+- **数据目录**：默认 `~/.config/dsh-desktop/`（Electron userData 约定）；绿色 AppImage 的数据仍写在运行目录。`data-dir` 标记与 `DSH_DESKTOP_DATA_DIR` 环境变量在 Linux 上同样有效。
+- **内核快照不跨平台共用**：依赖树含平台原生二进制（node-pty、sharp 等），Windows 下载的快照在 Linux 上不可用——Linux 端首次启动需重新下载内核。
+- **内置终端**：按 bash → zsh → sh 顺序检测；PATH 同样以内置 shim 优先（`dsh` / `pnpm` 可执行脚本）。
+- **进程管理**：内核以独立进程组启动，停止时 kill 整组（对应 Windows 的 taskkill /T）。

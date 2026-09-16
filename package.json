@@ -1,8 +1,8 @@
 {
   "name": "dsh-desktop",
   "productName": "DSH Desktop",
-  "version": "0.1.2",
-  "description": "DeepSeek Harness (DSH) 的 Windows 桌面封装：依赖内置、与系统隔离、内核可更新可回滚",
+  "version": "0.2.0",
+  "description": "DeepSeek Harness (DSH) 的桌面封装（Windows / Linux）：依赖内置、与系统隔离、内核可更新可回滚",
   "main": "src/main/index.js",
   "license": "MIT",
   "private": true,
