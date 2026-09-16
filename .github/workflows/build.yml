@@ -9,7 +9,46 @@ permissions:
   contents: write
 
 jobs:
+  # Linux 冒烟测试：真实启动内核、验证终端/shell 检测、切换/回滚、插件通道
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install system deps (Electron + pty + headless X)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg fakeroot \
+            libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 \
+            xvfb dbus-x11
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Smoke — terminal & shell detection (no kernel)
+        run: npm run smoke:terminal
+
+      - name: Smoke — phase2 (registry meta, proxies, lock)
+        run: npx xvfb-run -a npx electron scripts/smoke-phase2.js
+
+      - name: Seed kernel snapshot (real pnpm install of dsh)
+        run: npx xvfb-run -a npx electron scripts/seed-core.js 0.1.5-rc.1
+
+      - name: Smoke — kernel boots from userData with token URL
+        run: npx xvfb-run -a npx electron scripts/smoke-kernel.js
+
+      - name: Smoke — switch success/failure paths (config never poisoned)
+        run: npx xvfb-run -a npx electron scripts/smoke-switch.js
+
+      - name: Smoke — plugin store isolation (install via dsh plugin into dsh-home)
+        run: npx xvfb-run -a npx electron scripts/smoke-plugins.js
+
   build:
+    needs: [test-linux]
     strategy:
       fail-fast: false
       matrix:
