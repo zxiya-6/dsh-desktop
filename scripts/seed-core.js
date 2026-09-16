@@ -7,7 +7,7 @@ const store = require('../src/main/config-store');
 const core = require('../src/main/core-manager');
 
 app.whenReady().then(async () => {
-  const version = process.argv[2] || store.DEFAULT_KERNEL_VERSION;
+  const version = process.env.DSH_KERNEL_VERSION || process.argv[2] || store.DEFAULT_KERNEL_VERSION;
   try {
     console.log(`[seed] 安装内核 ${version} 到 ${store.paths.snapshotsDir()}`);
     const s = await core.installSnapshot(version, { onProgress: (m) => console.log('[seed]', m) });

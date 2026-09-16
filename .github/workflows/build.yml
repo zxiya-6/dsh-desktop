@@ -36,7 +36,7 @@ jobs:
         run: xvfb-run -a npx electron --no-sandbox -- scripts/smoke-phase2.js
 
       - name: Seed kernel snapshot (real pnpm install of dsh)
-        run: xvfb-run -a npx electron --no-sandbox -- scripts/seed-core.js 0.1.5-rc.1
+        run: DSH_KERNEL_VERSION=0.1.5-rc.1 xvfb-run -a npx electron --no-sandbox -- scripts/seed-core.js
 
       - name: Smoke — kernel boots from userData with token URL
         run: xvfb-run -a npx electron --no-sandbox -- scripts/smoke-kernel.js
