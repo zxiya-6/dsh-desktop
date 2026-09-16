@@ -33,19 +33,19 @@ jobs:
         run: npm run smoke:terminal
 
       - name: Smoke — phase2 (registry meta, proxies, lock)
-        run: xvfb-run -a npx electron scripts/smoke-phase2.js
+        run: xvfb-run -a npx electron --no-sandbox --disable-gpu scripts/smoke-phase2.js
 
       - name: Seed kernel snapshot (real pnpm install of dsh)
-        run: xvfb-run -a npx electron scripts/seed-core.js 0.1.5-rc.1
+        run: xvfb-run -a npx electron --no-sandbox --disable-gpu scripts/seed-core.js 0.1.5-rc.1
 
       - name: Smoke — kernel boots from userData with token URL
-        run: xvfb-run -a npx electron scripts/smoke-kernel.js
+        run: xvfb-run -a npx electron --no-sandbox --disable-gpu scripts/smoke-kernel.js
 
       - name: Smoke — switch success/failure paths (config never poisoned)
-        run: xvfb-run -a npx electron scripts/smoke-switch.js
+        run: xvfb-run -a npx electron --no-sandbox --disable-gpu scripts/smoke-switch.js
 
       - name: Smoke — plugin store isolation (install via dsh plugin into dsh-home)
-        run: xvfb-run -a npx electron scripts/smoke-plugins.js
+        run: xvfb-run -a npx electron --no-sandbox --disable-gpu scripts/smoke-plugins.js
 
   build:
     needs: [test-linux]
