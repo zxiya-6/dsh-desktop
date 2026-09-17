@@ -25,7 +25,12 @@ function assertPkg(name) {
 
 // Electron 二进制当作纯 Node 用（省掉打包一套 ~50MB 的 Node 运行时）
 function nodeBinary() { return process.execPath; }
-function nodeEnv() { return { ...process.env, ELECTRON_RUN_AS_NODE: '1' }; }
+function nodeEnv() {
+  // 与 buildChildEnv 同源滤毒：剥离 NODE_OPTIONS 防注入
+  const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+  delete env.NODE_OPTIONS;
+  return env;
+}
 
 function bundledPnpmDir() {
   return path.resolve(__dirname, '..', '..', 'node_modules', 'pnpm');
@@ -65,6 +70,12 @@ function startRateLimitProxy(limitKBps) {
   const server = http.createServer((req, res) => res.destroy());
   server.on('connect', (req, clientSocket, head) => {
     const [host, port] = req.url.split(':');
+    // CONNECT 白名单：只放行 443（npm registry 下载通道），防本机进程用作内网跳板
+    if (Number(port) !== 443 || !/^[A-Za-z0-9.-]+$/.test(host || '')) {
+      clientSocket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+      clientSocket.destroy();
+      return;
+    }
     const upstream = net.connect({ host, port: Number(port) || 443 }, () => {
       clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       upstream.write(head);

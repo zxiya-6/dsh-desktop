@@ -3,6 +3,11 @@
 const $ = (s) => document.querySelector(s);
 const currentVersion = { value: null };
 
+// HTML 转义：插件名/版本/描述来自 npm 第三方数据，插值进 innerHTML 前必须过这里
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+}[c]));
+
 // ---- 导航 ----
 document.querySelectorAll('#nav button').forEach((btn) => {
   btn.addEventListener('click', () => showView(btn.dataset.view));
@@ -28,7 +33,7 @@ async function refreshPlugins() {
   }
   for (const p of installed) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${p.name}</td><td>${p.version}</td><td><button class="act ghost" data-rm="${p.name}">卸载</button></td>`;
+    tr.innerHTML = `<td>${esc(p.name)}</td><td>${esc(p.version)}</td><td><button class="act ghost" data-rm="${esc(p.name)}">卸载</button></td>`;
     tb.appendChild(tr);
   }
   tb.querySelectorAll('[data-rm]').forEach((b) => b.addEventListener('click', async () => {
@@ -42,10 +47,10 @@ async function refreshPlugins() {
   const cb = $('#catalog-table tbody'); cb.innerHTML = '';
   for (const item of cat) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${item.name}${item.custom ? ' <span class="muted">(自定义)</span>' : ''}</td>
+    tr.innerHTML = `<td>${esc(item.name)}${item.custom ? ' <span class="muted">(自定义)</span>' : ''}</td>
       <td class="muted">${item.desc || ''}</td>
-      <td><button class="act ghost" data-cat="${item.name}">安装</button>
-        ${item.custom ? `<button class="act ghost" data-catdel="${item.name}">移除</button>` : ''}</td>`;
+      <td><button class="act ghost" data-cat="${esc(item.name)}">安装</button>
+        ${item.custom ? `<button class="act ghost" data-catdel="${esc(item.name)}">移除</button>` : ''}</td>`;
     cb.appendChild(tr);
   }
   cb.querySelectorAll('[data-cat]').forEach((b) => b.addEventListener('click', () => {
@@ -173,11 +178,11 @@ async function refreshKernel() {
   for (const s of snaps) {
     const tr = document.createElement('tr');
     const isCur = s.version === cfg.kernelVersion;
-    tr.innerHTML = `<td>${s.version}${isCur ? ' <span class="muted">(当前)</span>' : ''}</td>
+    tr.innerHTML = `<td>${esc(s.version)}${isCur ? ' <span class="muted">(当前)</span>' : ''}</td>
       <td>${s.ready ? 'ready' : s.installed ? 'installed' : 'broken'}</td>
       <td>
-        <button class="act ghost" data-switch="${s.version}">切换</button>
-        ${isCur ? '' : `<button class="act ghost" data-del="${s.version}">删除</button>`}
+        <button class="act ghost" data-switch="${esc(s.version)}">切换</button>
+        ${isCur ? '' : `<button class="act ghost" data-del="${esc(s.version)}">删除</button>`}
       </td>`;
     tb.appendChild(tr);
   }

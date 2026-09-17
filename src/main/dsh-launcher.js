@@ -17,12 +17,15 @@ function buildChildEnv({ dshHome, extraPathDirs = [] }) {
   const binDir = store.paths.bin();
   // 子进程 PATH 以内置目录优先：系统的 Node/npm/pnpm 不会干扰
   const pathHead = [binDir, ...extraPathDirs].filter(Boolean).join(path.delimiter);
-  return {
+  const env = {
     ...process.env,
     ELECTRON_RUN_AS_NODE: '1',
     DSH_HOME: dshHome,
     PATH: `${pathHead}${path.delimiter}${process.env.PATH || ''}`,
   };
+  // 环境滤毒：NODE_OPTIONS 能让 run-as-node 子进程加载任意 JS（--require）
+  delete env.NODE_OPTIONS;
+  return env;
 }
 
 // 启动内核。opts.entry: dsh bin.js 绝对路径；opts.dshHome: DSH_HOME

@@ -58,6 +58,13 @@ function createWindow() {
   mainWindow.webContents.on('will-navigate', (e, url) => {
     if (!isLoopbackUrl(url) && !url.startsWith('file://')) e.preventDefault();
   });
+  // 权限请求一律拒绝：应用不需要 geolocation/notifications/media 等任何 Web 权限
+  mainWindow.webContents.session.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  // 即使将来误开 webviewTag，也不允许任何 webview 挂载（iframe 承载已够用）
+  mainWindow.webContents.on('will-attach-webview', (e, webPreferences, params) => {
+    e.preventDefault();
+    webPreferences = null; params = null;
+  });
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, cb) => cb({}));
   mainWindow.on('closed', () => { mainWindow = null; });
 }
@@ -291,11 +298,18 @@ function registerIpc() {
     browserKernel: `Chromium ${process.versions.chrome}（Electron ${process.versions.electron} 内置，随包分发，不依赖系统浏览器）`,
     nodeRuntime: `Node ${process.versions.node}（Electron 内置，子进程以 ELECTRON_RUN_AS_NODE 复用）`,
   }));
+  // config:set 白名单：渲染层只能改这几个键（shell/数据目录指针等绝不暴露）
+  const CONFIG_WRITABLE_KEYS = new Set(['keepSnapshots', 'rateLimitKBps']);
   ipcMain.handle('config:set', (_e, patch) => {
-    if (patch && 'keepSnapshots' in patch) {
-      patch = { ...patch, keepSnapshots: Math.max(store.MIN_KEEP_SNAPSHOTS, Number(patch.keepSnapshots) || store.DEFAULT_KEEP_SNAPSHOTS) };
+    if (!patch || typeof patch !== 'object') return store.getConfig();
+    const safe = {};
+    for (const k of Object.keys(patch)) {
+      if (CONFIG_WRITABLE_KEYS.has(k)) safe[k] = patch[k];
     }
-    return store.setConfig(patch);
+    if ('keepSnapshots' in safe) {
+      safe.keepSnapshots = Math.max(store.MIN_KEEP_SNAPSHOTS, Number(safe.keepSnapshots) || store.DEFAULT_KEEP_SNAPSHOTS);
+    }
+    return store.setConfig(safe);
   });
   // 内核目录 / 插件主目录迁移：先停内核再搬，完成后原样重启
   ipcMain.handle('settings:relocate', async (_e, kind, newPath) => {
@@ -324,8 +338,15 @@ function registerIpc() {
       return { ok: true, id };
     } catch (err) { return { ok: false, error: err.message }; }
   });
-  ipcMain.on('terminal:input', (_e, { id, data }) => { sessions.get(id)?.write(data); });
-  ipcMain.on('terminal:resize', (_e, { id, cols, rows }) => { sessions.get(id)?.resize(cols, rows); });
+  ipcMain.on('terminal:input', (_e, { id, data }) => {
+    if (typeof data !== 'string' || data.length > 4096) return;
+    sessions.get(id)?.write(data);
+  });
+  ipcMain.on('terminal:resize', (_e, { id, cols, rows }) => {
+    const c = Math.min(Math.max(Number(cols) || 80, 2), 500);
+    const r = Math.min(Math.max(Number(rows) || 24, 2), 300);
+    sessions.get(id)?.resize(c, r);
+  });
   ipcMain.on('terminal:dispose', (_e, { id }) => {
     const t = sessions.get(id);
     if (t) { try { t.kill(); } catch {} sessions.delete(id); }
@@ -333,9 +354,13 @@ function registerIpc() {
 
   // app:openPath 只允许打开 userData 目录内的路径
   ipcMain.handle('app:openPath', async (_e, p) => {
-    const root = store.paths.root();
-    const resolved = path.resolve(p);
-    if (!resolved.startsWith(root)) return { ok: false, error: '只允许打开数据目录内的路径' };
+    const root = path.resolve(store.paths.root());
+    const resolved = path.resolve(String(p || ''));
+    const norm = (s) => (process.platform === 'win32' ? s.toLowerCase() : s);
+    const nRoot = norm(root) + path.sep;
+    if (norm(resolved) !== norm(root) && !norm(resolved).startsWith(nRoot)) {
+      return { ok: false, error: '只允许打开数据目录内的路径' };
+    }
     await shell.openPath(resolved);
     return { ok: true };
   });
